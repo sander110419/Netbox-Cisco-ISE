@@ -1,0 +1,67 @@
+trigger: none # No CI trigger
+
+schedules:
+- cron: "0 * * * *" # Run every hour
+  displayName: Hourly ISE to Netbox Sync
+  branches:
+    include:
+    - master
+  always: true
+
+variables:
+- group: ISE-Netbox-Sync-Variables
+
+resources:
+  repositories:
+  - repository: self
+    type: git
+    ref: main
+
+jobs:
+- job: SyncISEToNetbox
+  displayName: 'Sync ISE to Netbox'
+  timeoutInMinutes: 60
+  
+  steps:
+  - checkout: self
+    fetchDepth: 1
+    
+  - task: Bash@3
+    displayName: 'Setup Python'
+    inputs:
+      targetType: 'inline'
+      script: |
+        # Install Python 3.9 using apt
+        apt-get update
+        apt-get install -y iputils-ping python3.9 python3.9-dev python3.9-venv python3-pip libssl-dev
+        
+        # Create and activate a virtual environment
+        python3.9 -m venv .venv
+        
+        # Verify Python version
+        .venv/bin/python --version
+    
+  - task: Bash@3
+    displayName: 'Install Dependencies'
+    inputs:
+      targetType: 'inline'
+      script: |
+        .venv/bin/python -m pip install --upgrade pip
+        .venv/bin/pip install pynetbox requests urllib3 pysnmp pycryptodomex pysnmpcrypto tqdm
+        .venv/bin/python -c "from Cryptodome.Cipher import AES; print('Cryptodome is properly installed')"
+
+  - task: Bash@3
+    displayName: 'Run ISE to Netbox Sync'
+    inputs:
+      targetType: 'inline'
+      script: |
+        # Use the full path to the Python executable in the virtual environment
+        .venv/bin/python ISE_to_Netbox/ISE_to_Netbox.py \
+          --ise-url "$(ISE_URL)" \
+          --ise-username "$(ISE_USERNAME)" \
+          --ise-password "$(ISE_PASSWORD)" \
+          --netbox-url "$(NETBOX_URL)" \
+          --netbox-token "$(NETBOX_TOKEN)" \
+          --snmp-user "$(SNMP_USER)" \
+          --snmp-auth "$(SNMP_AUTH)" \
+          --snmp-priv "$(SNMP_PRIV)"
