@@ -23,7 +23,7 @@ The ISE_to_Netbox.py script discovers and synchronizes the following ISE resourc
 
 1. Clone this repository:
 ```bash
-git clone https://your-repository-url/ISE_to_netbox.git
+git clone https://github.com/sander110419/Netbox-Cisco-ISE.git
 ```
 
 2. Install the required dependencies:
