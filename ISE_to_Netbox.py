@@ -54,6 +54,17 @@ SNMP_OIDS = {
     'ciscoModel': '1.3.6.1.2.1.47.1.1.1.1.13.1', # Cisco model number
     'ciscoSerial': '1.3.6.1.2.1.47.1.1.1.1.11.1', # Cisco serial number
     'ciscoIOS': '1.3.6.1.2.1.1.1.0',           # Cisco IOS version (parsed from sysDescr)
+    'entPhysicalModelName': '1.3.6.1.2.1.47.1.1.1.1.13.1',
+    'entPhysicalHardwareRev': '1.3.6.1.2.1.47.1.1.1.1.8.1',
+    'entPhysicalMfgName': '1.3.6.1.2.1.47.1.1.1.1.12.1',
+    'entPhysicalHeight': '1.3.6.1.2.1.47.1.1.1.1.4.1',
+    'cefcFRUPowerAdminStatus': '1.3.6.1.4.1.9.9.117.1.1.2.1.1',
+    'ciscoEnvMonTemperatureStatusDescr': '1.3.6.1.4.1.9.9.13.1.3.1.2',
+    'ciscoMemoryPoolName': '1.3.6.1.4.1.9.9.48.1.1.1.2',
+    'ciscoMemoryPoolUsed': '1.3.6.1.4.1.9.9.48.1.1.1.5',
+    'ciscoMemoryPoolFree': '1.3.6.1.4.1.9.9.48.1.1.1.6',
+    'ifType': '1.3.6.1.2.1.2.2.1.3',
+    'ifHighSpeed': '1.3.6.1.2.1.31.1.1.1.15'
 }
 
 def truncate_name(name, max_length=64):
@@ -235,7 +246,7 @@ async def get_snmp_value(engine, ip_address, snmp_user, auth_key, priv_key, oid_
                 authProtocol=usmHMACSHAAuthProtocol,
                 privProtocol=usmAesCfb128Protocol
             ),
-            await UdpTransportTarget.create((ip_address, 161), timeout=1, retries=1),
+            await UdpTransportTarget.create((ip_address, 161), timeout=2, retries=2),
             ContextData(),
             ObjectType(obj_identity)
         )
@@ -294,37 +305,10 @@ async def get_snmp_data_async_impl(ip_address, snmp_user, auth_key, priv_key):
     logger.info(f"Getting SNMP data for device at {ip_address}")
     
     # Update SNMP_OIDS to match the format in testsnmp.py
-    snmp_oids = {
-        # Base
-        'sysDescr': (SNMP_OIDS['sysDescr'], None, None),
-        'sysName': (SNMP_OIDS['sysName'], None, None),
-        'sysLocation': (SNMP_OIDS['sysLocation'], None, None),
-        'sysContact': (SNMP_OIDS['sysContact'], None, None),
-        'sysUpTime': (SNMP_OIDS['sysUpTime'], None, None),
-        'ifNumber': (SNMP_OIDS['ifNumber'], None, None),
-        'ciscoModel': (SNMP_OIDS['ciscoModel'], None, None),
-        'ciscoSerial': (SNMP_OIDS['ciscoSerial'], None, None),
-        'ciscoIOS': (SNMP_OIDS['ciscoIOS'], None, None),
-        
-        # Physical specifications
-        'entPhysicalModelName': (SNMP_OIDS['entPhysicalModelName'], None, None),
-        'entPhysicalHardwareRev': (SNMP_OIDS['entPhysicalHardwareRev'], None, None),
-        'entPhysicalMfgName': (SNMP_OIDS['entPhysicalMfgName'], None, None),
-        'entPhysicalHeight': (SNMP_OIDS['entPhysicalHeight'], None, None),
-        
-        # Power and environment
-        'cefcFRUPowerAdminStatus': (SNMP_OIDS['cefcFRUPowerAdminStatus'], None, None),
-        'ciscoEnvMonTemperatureStatusDescr': (SNMP_OIDS['ciscoEnvMonTemperatureStatusDescr'], None, None),
-        
-        # Memory and CPU
-        'ciscoMemoryPoolName': (SNMP_OIDS['ciscoMemoryPoolName'], None, None),
-        'ciscoMemoryPoolUsed': (SNMP_OIDS['ciscoMemoryPoolUsed'], None, None),
-        'ciscoMemoryPoolFree': (SNMP_OIDS['ciscoMemoryPoolFree'], None, None),
-        
-        # Interface details
-        'ifType': (SNMP_OIDS['ifType'], None, None),
-        'ifHighSpeed': (SNMP_OIDS['ifHighSpeed'], None, None),
-    }
+    # Only use OIDs that are actually defined
+    snmp_oids = {}
+    for oid_name, oid in SNMP_OIDS.items():
+        snmp_oids[oid_name] = (oid, None, None)
     
     snmp_data = {}
     engine = SnmpEngine()
@@ -379,6 +363,120 @@ def parse_device_type(device_groups):
     
     return device_type
 
+def extract_site_id_from_device_name(device_name):
+    """
+    Extract site/facility ID from device name
+    Handles formats like:
+    - SWP-028-01 (site ID: 28)
+    - SWP-056-01 (site ID: 56)
+    - SWP0505 (site ID: 5)
+    - SWP0802 (site ID: 8)
+    - SWP7201 (site ID: 72)
+    """
+    logger.debug(f"Extracting site ID from device name: {device_name}")
+    
+    # Try format 1: SWP-XXX-YY where XXX is the site ID
+    format1_match = re.match(r'SWP-0*(\d+)-\d+', device_name)
+    if format1_match:
+        site_id = format1_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 1)")
+        return site_id
+        
+    # Try format 2: SWPXXYZ where XX is the site ID
+    format2_match = re.match(r'SWP(\d{1,2})\d{2}', device_name)
+    if format2_match:
+        site_id = format2_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 2)")
+        return site_id
+    
+    # Try format 1: SW-XXX-YY where XXX is the site ID
+    format1_match = re.match(r'SW-0*(\d+)-\d+', device_name)
+    if format1_match:
+        site_id = format1_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 1)")
+        return site_id
+    
+    # Try format 1: SW-XX-YY where XX is the site ID
+    format1_match = re.match(r'SW-*(\d+)-\d+', device_name)
+    if format1_match:
+        site_id = format1_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 1)")
+        return site_id
+        
+    # Try format 2: SWXXYZ where XX is the site ID
+    format2_match = re.match(r'SW(\d{1,2})\d{2}', device_name)
+    if format2_match:
+        site_id = format2_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 2)")
+        return site_id
+    
+    # Try format 1: AP-XXX-YY where XXX is the site ID
+    format1_match = re.match(r'AP-0*(\d+)-\d+', device_name)
+    if format1_match:
+        site_id = format1_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 1)")
+        return site_id
+        
+    # Try format 2: APXXYZ where XX is the site ID
+    format2_match = re.match(r'AP(\d{1,2})\d{2}', device_name)
+    if format2_match:
+        site_id = format2_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 2)")
+        return site_id
+    
+    # Try format 1: SWA-XXX-YY where XXX is the site ID
+    format1_match = re.match(r'SWA-0*(\d+)-\d+', device_name)
+    if format1_match:
+        site_id = format1_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 1)")
+        return site_id
+        
+    # Try format 2: SWAXXYZ where XX is the site ID
+    format2_match = re.match(r'SWA(\d{1,2})\d{2}', device_name)
+    if format2_match:
+        site_id = format2_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 2)")
+        return site_id
+    
+    # Try format 1: FWL-XXX-YY where XXX is the site ID
+    format1_match = re.match(r'FWL-0*(\d+)-\d+', device_name)
+    if format1_match:
+        site_id = format1_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 1)")
+        return site_id
+        
+    # Try format 2: FWLXXYZ where XX is the site ID
+    format2_match = re.match(r'FWL(\d{1,2})\d{2}', device_name)
+    if format2_match:
+        site_id = format2_match.group(1)
+        logger.info(f"Extracted site ID {site_id} from device name {device_name} (format 2)")
+        return site_id
+    
+    # If no pattern matches, return None
+    logger.warning(f"Could not extract site ID from device name: {device_name}")
+    return None
+
+def find_site_by_facility_id(nb, facility_id):
+    """Find a site in Netbox by facility ID"""
+    try:
+        # Try to find site with matching facility ID
+        sites = nb.dcim.sites.filter(cf_facility_id=facility_id)
+        if sites and len(sites) > 0:
+            logger.info(f"Found site with facility ID {facility_id}: {sites[0].name}")
+            return sites[0]
+            
+        # If not found by facility ID, try by name format "Site X"
+        site_name = f"Site {facility_id}"
+        site = nb.dcim.sites.get(name=site_name)
+        if site:
+            logger.info(f"Found site by name: {site_name}")
+            return site
+            
+        return None
+    except Exception as e:
+        logger.debug(f"Error searching for site with facility ID {facility_id}: {str(e)}")
+        return None
+    
 def parse_location(device_groups):
     """Parse location from device groups"""
     location = "Unknown"
@@ -449,37 +547,103 @@ def get_or_create_device_type(nb, model, manufacturer_name, tags):
     )
 
 def get_or_create_device_role(nb, name, tags):
-    """Get or create a device role in Netbox"""
-    try:
-        role = nb.dcim.device_roles.get(name=name)
-        if role:
-            return role
-    except Exception as e:
-        logger.debug(f"Error getting device role {name}: {str(e)}")
+    """Get or create a device role in Netbox with retry logic"""
+    max_retries = 3
+    retry_delay = 2  # seconds
     
-    return nb.dcim.device_roles.create(
-        name=name,
-        slug=sanitize_slug(name),
-        vm_role=False,
-        tags=tags
-    )
+    for attempt in range(max_retries):
+        try:
+            # Try to get the role by name first
+            try:
+                role = nb.dcim.device_roles.get(name=name)
+                if role:
+                    logger.info(f"Found existing device role: {name}")
+                    return role
+            except ValueError:
+                # This means multiple results were found
+                # Convert RecordSet to a list first to get the first item
+                roles = list(nb.dcim.device_roles.filter(name=name))
+                if roles:
+                    logger.info(f"Found {len(roles)} device roles named '{name}', using the first one")
+                    return roles[0]
+            
+            # Create new role if none exists
+            logger.info(f"Creating new device role: {name}")
+            return nb.dcim.device_roles.create(
+                name=name,
+                slug=sanitize_slug(name),
+                vm_role=False,
+                tags=tags
+            )
+        except Exception as e:
+            if "deadlock detected" in str(e) and attempt < max_retries - 1:
+                logger.warning(f"Deadlock detected creating device role {name}, retrying in {retry_delay}s")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"Error handling device role {name}: {str(e)}")
+                raise
+
 
 def get_or_create_site(nb, name, description, tags):
     """Get or create a site in Netbox"""
+    # First try to get the site by name
     try:
         site = nb.dcim.sites.get(name=name)
         if site:
+            logger.info(f"Found existing site by name: {name}")
             return site
     except Exception as e:
-        logger.debug(f"Error getting site {name}: {str(e)}")
+        logger.debug(f"Error getting site by name {name}: {str(e)}")
     
-    return nb.dcim.sites.create(
-        name=name,
-        status='active',
-        slug=sanitize_slug(name),
-        description=description,
-        tags=tags
-    )
+    # If not found by name, try by slug
+    slug = sanitize_slug(name)
+    try:
+        site = nb.dcim.sites.filter(slug=slug)
+        if site and len(site) > 0:
+            logger.info(f"Found existing site by slug: {slug}")
+            return site[0]
+    except Exception as e:
+        logger.debug(f"Error getting site by slug {slug}: {str(e)}")
+    
+    # Create site if it doesn't exist
+    try:
+        return nb.dcim.sites.create(
+            name=name,
+            status='active',
+            slug=slug,
+            description=description,
+            tags=tags
+        )
+    except RequestError as e:
+        # Handle case where slug already exists but we couldn't find it earlier
+        if "site with this slug already exists" in str(e):
+            # Try to find the site again with direct slug filter
+            existing_sites = list(nb.dcim.sites.filter(slug=slug))
+            if existing_sites:
+                logger.warning(f"Site with slug '{slug}' already exists, using existing site")
+                return existing_sites[0]
+            
+            # If we still can't find it, create with a modified slug
+            counter = 1
+            while True:
+                new_slug = f"{slug}-{counter}"
+                try:
+                    logger.warning(f"Creating site with modified slug: {new_slug}")
+                    return nb.dcim.sites.create(
+                        name=name,
+                        status='active',
+                        slug=new_slug,
+                        description=description,
+                        tags=tags
+                    )
+                except RequestError as inner_e:
+                    if "site with this slug already exists" in str(inner_e):
+                        counter += 1
+                    else:
+                        raise
+        else:
+            raise
 
 def get_or_create_ip_address(nb, ip_address, mask, description, tags, interface_id=None):
     """Get or create an IP address in Netbox"""
@@ -577,6 +741,46 @@ def sync_to_netbox(ise_devices, netbox_url, netbox_token, snmp_user, auth_key, p
         # Parse device type and location from device groups
         device_type_name = parse_device_type(device_groups)
         location_name = parse_location(device_groups)
+
+        # Try to extract site ID from device name
+        site_id_from_name = extract_site_id_from_device_name(device_name)
+        if site_id_from_name:
+            # First try to look up site by facility ID
+            facility_id = site_id_from_name.replace("Site ", "")
+            site = find_site_by_facility_id(nb, facility_id)
+            
+            if site:
+                logger.info(f"Found site with facility ID {facility_id}: {site.name}")
+            else:
+                # Try to find an existing site that matches the location_name
+                site = find_site_by_name(nb, location_name)
+                
+                # Create site if no match found
+                if not site:
+                    site = get_or_create_site(
+                        nb,
+                        name=location_name,
+                        description=f"Location: {location_name}",
+                        tags=[ise_tag.id]
+                    )
+                    logger.info(f"Created new site: {location_name}")
+                else:
+                    logger.info(f"Using existing site: {site.name} for location: {location_name}")
+        else:
+            # If no site ID could be extracted, fall back to the original logic
+            site = find_site_by_name(nb, location_name)
+            
+            # Create site if no match found
+            if not site:
+                site = get_or_create_site(
+                    nb,
+                    name=location_name,
+                    description=f"Location: {location_name}",
+                    tags=[ise_tag.id]
+                )
+                logger.info(f"Created new site: {location_name}")
+            else:
+                logger.info(f"Using existing site: {site.name} for location: {location_name}")
         
         # Get IP addresses for the device
         ip_list = device.get('NetworkDeviceIPList', [])
@@ -659,7 +863,6 @@ def sync_to_netbox(ise_devices, netbox_url, netbox_token, snmp_user, auth_key, p
                 update_data = {
                     'device_type': device_type.id,
                     'role': device_role.id,
-                    'site': site.id,
                     'serial': serial,
                     'description': device_description
                 }
@@ -843,9 +1046,9 @@ def parse_arguments():
     parser.add_argument('--netbox-url', help='Netbox URL', default=os.environ.get('NETBOX_URL'))
     parser.add_argument('--netbox-token', help='Netbox API token', default=os.environ.get('NETBOX_TOKEN'))
     parser.add_argument('--verify-ssl', action='store_true', help='Verify SSL certificates for ISE API calls')
-    parser.add_argument('--snmp-user', help='SNMPv3 username', default=os.environ.get('SNMP_USER', 'PRTGUser'))
-    parser.add_argument('--snmp-auth', help='SNMPv3 authentication key', default=os.environ.get('SNMP_AUTH', 'f84366043b79c73cc61710b3664ad88e'))
-    parser.add_argument('--snmp-priv', help='SNMPv3 privacy key', default=os.environ.get('SNMP_PRIV', '74c352800c52ea1196f796a94bb3f3c9'))
+    parser.add_argument('--snmp-user', help='SNMPv3 username', default=os.environ.get('SNMP_USER', 'SNMPUSer'))
+    parser.add_argument('--snmp-auth', help='SNMPv3 authentication key', default=os.environ.get('SNMP_AUTH', ''))
+    parser.add_argument('--snmp-priv', help='SNMPv3 privacy key', default=os.environ.get('SNMP_PRIV', ''))
     return parser.parse_args()
 
 def main():
